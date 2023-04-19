@@ -68,6 +68,7 @@ class clean():
             phrase = self.table_new.loc[old_name].iloc[0] # find the first pharse in the mass production table
             # print(phrase, len(phrase))
             # print(type(phrase))
+            # print(phrase)
             if (old_name is None or old_name == ''):
                 return ''
             elif (pd.isnull(phrase) or len(phrase) == 0):
@@ -744,6 +745,180 @@ class translate_xml():
             tree.write(outfile, encoding='utf-8')
         print("finish XML translation")
 
+class translate_brd():
+    """the class for translation purpose"""
+    def __init__(self, path, infile_folder=None, outfile_folder=None, path_ref=None, TARGET_LANG='es'):
+        if infile_folder:
+            self.infile_folder = infile_folder
+        else:
+            self.infile_folder = path + '/FinalBRDs/'
+        if outfile_folder:
+            self.outfile_folder = outfile_folder
+        else:
+            self.outfile_folder = path +'/FinalBRDs/CleanedBRDs/'
+        if os.path.exists(self.outfile_folder):
+            pass
+        else:
+            os.makedirs(self.outfile_folder)
+        self.TARGET_LANG = TARGET_LANG 
+        self.path_ref = path_ref
+    
+    def translate_file(self):
+        fs_brd = glob.glob(self.infile_folder + "*")
+        for brds in tqdm(fs_brd, position=0, leave=True):
+            try:
+                tree = ET.parse(brds)
+                root = tree.getroot()
+                tags = ['hintMessage', 'successMessage', 'buggyMessage', 'label', 'Input']
+                for tag in tags:
+                    self.iterate_generic(tag, root)
+                outfile_brd = self.outfile_folder + brds.split("\\", 1)[-1]
+                new = '_'+self.TARGET_LANG+'.brd'
+                outfile_brd = outfile_brd.replace('.brd', new)
+                print(outfile_brd)
+                output = open(outfile_brd, 'w+b')
+                output.write(b'<?xml version="1.0" standalone="yes"?>\n\n')
+                tree.write(output, encoding='utf-8')
+            except Exception as e: 
+                print("error", e)
+    
+    def iterate_generic(self, tag, root) :
+        for element in root.iter(tag):
+            # print(tag)
+            if tag == 'Input' and element[0].tag == 'value': # find input value
+                txt = element[0].text
+                self.process_txt(txt, element, tag)
+            else:
+                txt = element.text
+                self.process_txt(txt, element, tag)
+
+    def clean_phrase(self, s, convert_to_lower=False):
+        """remove unnecessary part in value"""
+        if(s is None or s == '' or s==' '):
+            return None
+        s = re.sub('\t\n\r', '', s) # remove tab, line break, carriage return
+        s = ' '.join(s.split()) # remove redundant whitespace
+        return s.lower() if convert_to_lower else s
+    
+    def process_txt(self, txt, element, tag):
+        """process txt"""
+        # if txt is empty
+        if self.clean_phrase(txt) is None or self.clean_phrase(txt) == '':
+            return
+        else:
+            if tag == 'Input':
+                element[0].text = str(self.translate_txt(txt))
+            else:
+                element.text = str(self.translate_txt(txt))
+            return
+    
+    def translate_txt(self, txt):
+        """translate txt"""
+        if self.path_ref is None:
+            table_old = None
+        else:
+            # read the Greg's mass production table
+            table_old = pd.read_csv(self.path_ref, header = None)
+            # skip some rows, because they are translation for HTML elements
+            header_index = table_old.index[table_old[0] == 'Problem Name'].to_list()
+            # reload the csv
+            table_old = pd.read_csv(self.path_ref, header = header_index)
+        google_dict = {}
+        content_new = str(txt)
+        if re.match(r"^(?!-0?(\.0+)?$)-?(0|[1-9]\d*)?(\.\d+)?(?<=\d)$", content_new) or content_new == '':
+            content_translated = content_new
+            content_translated_clean = content_new
+        else:
+            # replace
+            # judge whether a formula inside the content new
+            pattern_formula = "<%(.*?)%>"
+            # count the number of the replacement in one variable(content_new)
+            match_formula = [match for match in re.findall(pattern_formula, str(content_new))]
+            if match_formula:
+                content_new, replacement_formula_dic = self.replace_formula(content_new)
+            else:
+                replacement_formula_dic = None
+            pattern_variable = "%\((.*?)\)%"
+            match_variable = [match for match in re.findall(pattern_variable, str(content_new))]
+            if bool(replacement_formula_dic) is False:
+                pass
+            else:
+                for key, value in replacement_formula_dic.items():
+                    content_new = content_new.replace(key, value)
+            if content_new in google_dict:
+                # print("find translation in dict")
+                content_translated = '[google]' + google_dict[content_new]
+                content_translated_clean = google_dict[content_new]
+            # translate in google
+            elif table_old is None or table_old.columns[(table_old == content_new).any()].empty:
+                # print("use google translation")
+                # print(content_new)
+                if match_formula:
+                    content_new, translation_formula_dic = self.replace_formula(content_new, is_translate=True)
+                else:
+                    translation_formula_dic = None
+                try:
+                    translation = tss.google(content_new, from_language='en', to_language=self.TARGET_LANG)
+                except:
+                    translation = 'error'
+                    print('error, to be translated:', content_new)
+                if bool(translation_formula_dic) is False:
+                    pass
+                else:
+                    for key, value in translation_formula_dic.items():
+                        content_new = content_new.replace(key, value)
+                        translation = translation.replace(key, value)
+                content_translated = '[google]' + translation
+                content_translated_clean = translation
+                google_dict[content_new] = translation 
+            # find translation in old table
+            else:
+                # print("find translation in sheet")
+                column_name_old = table_old.columns[(table_old == content_new).any()][0]
+                column_num_old = table_old.columns.get_loc(column_name_old)
+                content_translated = table_old[table_old[column_name_old] == content_new].iloc[0, column_num_old+1]
+                content_translated_clean = table_old[table_old[column_name_old] == content_new].iloc[0, column_num_old+1]  
+        return str(content_translated_clean)
+
+    def replace_formula(self, content_new, is_translate=False, replacement="#"):
+        """replace the formula in the content_new"""
+        replacement_sign = replacement
+        replacement_formula_dic = {}
+        pattern_formula = "<%(.*?)%>"
+        match_formula = [match for match in re.findall(pattern_formula, str(content_new))]
+        if match_formula:
+            for i in range(len(match_formula)):
+                old_formula = match_formula[i]
+                if '"' in old_formula:
+                    if is_translate:
+                        formula = self.translate_string(old_formula)
+                    else:
+                        formula = old_formula
+                    final_formula = str(formula)
+                else:
+                    final_formula = str(old_formula)
+                replacement = replacement_sign + str(i)
+                replacement_formula_dic[replacement] = '<%' + final_formula + '%>'
+                content_new = content_new.replace('<%' + old_formula + '%>', replacement)
+        return content_new, replacement_formula_dic
+        
+    def translate_string(self, formula):
+        """translate the string in the formula"""
+        pattern_string = '"(.*?)"'
+        match_string = [match for match in re.findall(pattern_string, formula)]
+        if match_string:
+            for i in range(len(match_string)):
+                string = str(match_string[i])
+                if string == '':
+                    pass
+                else:
+                    try:
+                        translation = tss.google(string, from_language='en', to_language=self.TARGET_LANG)
+                    except:
+                        translation = 'error'
+                    formula = formula.replace(string, translation) 
+        return formula
+
 if __name__ == "__main__":
     mode = sys.argv[1]
     path = sys.argv[2]
@@ -795,118 +970,41 @@ if __name__ == "__main__":
         print("validate for translation task ------")
         validate_clean_res = validate(path)
         validate_clean_res.validate_file()
-        # print("translate html task ------")
-        # translate_clean_html = translate_html(path, infile_html, TARGET_LANG=TARGET_LANG)
-        # translate_clean_html.translate_file()
-        # print("translate xml task ------")
-        # translate_clean_xml = translate_xml(path, path_translation = translated_table, path_ref=ref_table, TARGET_LANG=TARGET_LANG)
-        # translate_clean_xml.translate_file()
+        print("translate html task ------")
+        translate_clean_html = translate_html(path, infile_html, TARGET_LANG=TARGET_LANG)
+        translate_clean_html.translate_file()
+        print("translate xml task ------")
+        translate_clean_xml = translate_xml(path, path_translation = translated_table, path_ref=ref_table, TARGET_LANG=TARGET_LANG)
+        translate_clean_xml.translate_file()
 
+    elif mode == "single":
+        print("single translation")
+        for arg in sys.argv[3:]:
+            # print(arg)
+            _, file_extension = os.path.splitext(arg)
+            if file_extension == '.html':
+                infile_html = arg
+            elif file_extension == '.csv':
+                ref_table = arg
+            else:
+                TARGET_LANG = arg
 
-
-
-# python general_new.py all "./HTML_folder/7.17 ESP HTML/7.17 ESP HTML" 7-17_finalTemplate_new.brd 7-17_finalMassProduction_new.txt 7.17.html "./Greg_table_folder/7.17 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.20 ESP HTML/6.20 ESP HTML" 6-20.brd 6-20.txt 6.20.html "./Greg_table_folder/6.20 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.10 ESP HTML/6.10 ESP HTML" finalTemplateNew.brd finalMassProdtable.txt 6.10.html "./Greg_table_folder/6.10 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.06 ESP HTML/7.06 ESP HTML" 7_06.brd 7_06.txt 7.06.html "./Greg_table_folder/7.06 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.10 ESP HTML/7.10 ESP HTML" 7_10.brd 7_10.txt 7.10.html "./Greg_table_folder/7.10 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.02 ESP HTML/6.02 ESP HTML" 6-02.brd 6-02.txt 6.02.html "./Greg_table_folder/6.02 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.17 ESP HTML/6.17 ESP HTML" 6_17.brd 6_17.txt 6.17.html "./Greg_table_folder/6.17 Translation - Sheet2.csv"
-
-# python general_new.py all "./HTML_folder/6.27 ESP HTML/6.27 ESP HTML" 6-27.brd 6-27.txt 6.27.html "./Greg_table_folder/6.27 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.05 ESP HTML/7.05 ESP HTML" 7-05_finalTemplate.brd 7-05_finalMassProduction.txt 7.05.html "./Greg_table_folder/7.05 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.07 ESP HTML/7.07 ESP HTML" 7-07_finalTemplate.brd 7-07_finalMassProduction.txt 7.07.html "./Greg_table_folder/7.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/8.15 ESP HTML/8.15 ESP HTML" 8-15_new.brd 8-15.txt 8.15.html "./Greg_table_folder/8.15 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.01 ESP HTML/6.01 ESP HTML" 6-01-4.brd 6-01-4.txt 6.01-4.html "./Greg_table_folder/6.01 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.01 ESP HTML/6.01 ESP HTML" 6-01-5.brd 6-01-5.txt 6.01-5.html "./Greg_table_folder/6.01 - Sheet2.csv"
-
-# python general_new.py all "./HTML_folder/6.05 ESP HTML/6.05 ESP HTML" 6_5.brd 6_5.txt 6.05.html "./Greg_table_folder/6.05 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.06 ESP HTML/6.06 ESP HTML" finalTemplateNew.brd finalMassProdtable.txt 6.06.html "./Greg_table_folder/6.06 Translation - Sheet2.csv"
-
-# python general_new.py all "./HTML_folder/6.07 ESP HTML/6.07 ESP HTML" 6_07_bank-account_finalTemplate.brd 6_07_bank-account_finalMassProduction.txt 6.07.html "./Greg_table_folder/6.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.07 ESP HTML/6.07 ESP HTML" 6_07_birthday_finalTemplate.brd 6_07_birthday_finalMassProduction.txt 6.07.html "./Greg_table_folder/6.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.07 ESP HTML/6.07 ESP HTML" 6_07_entertainment_finalTemplate.brd 6_07_entertainment_finalMassProduction.txt 6.07.html "./Greg_table_folder/6.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.07 ESP HTML/6.07 ESP HTML" 6_07_fleece_finalTemplate.brd 6_07_fleece_finalMassProduction.txt 6.07.html "./Greg_table_folder/6.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.07 ESP HTML/6.07 ESP HTML" 6_07_gardening_finalTemplate.brd 6_07_gardening_finalMassProduction.txt 6.07.html "./Greg_table_folder/6.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.07 ESP HTML/6.07 ESP HTML" 6_07_post-office_finalTemplate.brd 6_07_post-office_finalMassProduction.txt 6.07.html "./Greg_table_folder/6.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.07 ESP HTML/6.07 ESP HTML" 6_07_softball_finalTemplate.brd 6_07_softball_finalMassProduction.txt 6.07.html "./Greg_table_folder/6.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.07 ESP HTML/6.07 ESP HTML" 6_07_vacation_finalTemplate.brd 6_07_vacation_finalMassProduction.txt 6.07.html "./Greg_table_folder/6.07 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.08 ESP HTML/6.08 ESP HTML" finalTemplateNew.brd finalMassProdtable.txt 6.08.html "./Greg_table_folder/6.08 Translation - Sheet2.csv"
-
-# python general_new.py all "./HTML_folder/6.11 ESP HTML/6.11 ESP HTML" ADDITIONfinalTemplate.brd ADDITIONfinalMassProdtable.txt 6.11.html "./Greg_table_folder/6.11 Translation - merge.csv"
-
-# python general_new.py all "./HTML_folder/6.11 ESP HTML/6.11 ESP HTML" STARTfinalTemplate.brd STARTfinalMassProdtable.txt 6.11.html "./Greg_table_folder/6.11 Translation - merge.csv"
-
-# python general_new.py all "./HTML_folder/6.11 ESP HTML/6.11 ESP HTML" SUBTRACTIONfinalTemplate.brd SUBTRACTIONfinalMassProdtable.txt 6.11.html "./Greg_table_folder/6.11 Translation - merge.csv"
-
-# python general_new.py all "./HTML_folder/6.14 ESP HTML/6.14 ESP HTML" 6-14_finalTemplate.brd 6-14_finalMassProduction.txt 6.14.html "./Greg_table_folder/6.14 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.15 ESP HTML/6.15 ESP HTML" 6-15_finalTemplate.brd 6-15_finalMassProduction.txt 6.15.html "./Greg_table_folder/6.15 - Sheet2.csv"
-
-# python general_new.py all "./HTML_folder/6.16 ESP HTML/6.16 ESP HTML" 6-16a_finalTemplate.brd 6-16a_finalMassProduction.txt 6.16a.html "./Greg_table_folder/6.16 A - Sheet2_merge.csv"
-
-# python general_new.py all "./HTML_folder/6.16 ESP HTML/6.16 ESP HTML" 6-16b-gloss_finalTemplate.brd 6-16b-gloss_finalMassProduction.txt 6.16b.html "./Greg_table_folder/6.16 A - Sheet2_merge.csv"
-
-# python general_new.py all "./HTML_folder/6.18 ESP HTML/6.18 ESP HTML" 6-18_finalTemplate.brd 6-18_finalMassProduction.txt 6.18.html "./Greg_table_folder/6.18 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.19 ESP HTML/6.19 ESP HTML" 6-19.brd 6-19.txt 6.19.html "./Greg_table_folder/6.19 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.21 ESP HTML/6.21 ESP HTML" 6_21.brd 6_21.txt 6.21.html "./Greg_table_folder/6.21 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.24 ESP HTML/6.24 ESP HTML" 6-24-1_finalTemplate.brd 6-24-1_finalMassProduction.txt 6.24.html "./Greg_table_folder/6.24 Translation - Sheet1_merge.csv"
-
-# python general_new.py all "./HTML_folder/6.24 ESP HTML/6.24 ESP HTML" 6-24-2_finalTemplate.brd 6-24-2_finalMassProduction.txt 6.24.html "./Greg_table_folder/6.24 Translation - Sheet1_merge.csv"
-
-# python general_new.py all "./HTML_folder/6.24 ESP HTML/6.24 ESP HTML" 6-24-3_finalTemplate.brd 6-24-3_finalMassProduction.txt 6.24.html "./Greg_table_folder/6.24 Translation - Sheet1_merge.csv"
-
-# python general_new.py all "./HTML_folder/6.25 ESP HTML/6.25 ESP HTML" 6-25_finalTemplate.brd 6-25_finalMassProduction.txt 6.25.html "./Greg_table_folder/6.25 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.25 ESP HTML/6.25 ESP HTML" GCF-mass.brd GCF-mass.txt 6.25.html "./Greg_table_folder/6.25 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.26 ESP HTML/6.26 ESP HTML" 6-26_finalTemplate-fixCBs.brd 6-26_finalMassProduction.txt 6.26.html "./Greg_table_folder/6.26 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.28 ESP HTML/6.28 ESP HTML" 6_28_start.brd 6_28_start.txt 6.28.html "./Greg_table_folder/6.28 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.30 ESP HTML/6.30 ESP HTML" masspro.brd masspro.txt 6.30.html "./Greg_table_folder/6.30 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/6.34 ESP HTML/6.34 ESP HTML" template_6.34_new.brd template_6.34.txt 6.34.html "./Greg_table_folder/6.34 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/8.17 ESP HTML/8.17 ESP HTML" finalTemplate.brd finalMassProdtable.txt 8.17.html "./Greg_table_folder/8.17 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.01 ESP HTML/7.01 ESP HTML" 7.01-mass.brd 7.01-mass.txt 7.01.html "./Greg_table_folder/7.01 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.02 ESP HTML/7.02 ESP HTML" 7_02_template.brd 7_02_template.txt 7.02.html "./Greg_table_folder/7.02 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.04 ESP HTML/7.04 ESP HTML" 7_04_finalTemplate.brd 7_04_finalMassProduction.txt 7.04.html "./Greg_table_folder/7.04 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.12 ESP HTML/7.12 ESP HTML" 7-12_finalTemplate.brd 7-12_finalMassProduction.txt 7.12.html "./Greg_table_folder/7.12 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.15 ESP HTML/7.15 ESP HTML" 7-15_finalTemplate.brd 7-15_finalMassProduction.txt 7.15.html "./Greg_table_folder/7.15 Translation - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/7.16 ESP HTML/7.16 ESP HTML" 7-16_finalTemplate.brd 7-16_finalMassProduction.txt 7.16.html "./Greg_table_folder/7.16 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/8.05 ESP HTML/8.05 ESP HTML" 8-05tmpl.brd 8-05tmpl.txt 8.05.html "./Greg_table_folder/8.05 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/8.06 ESP HTML/8.06 ESP HTML" 8-06_finalTemplate.brd 8-06_finalMassProduction.txt 8.06.html "./Greg_table_folder/8.06 - Sheet1.csv"
-
-# python general_new.py all "./HTML_folder/8.07 ESP HTML/8.07 ESP HTML" 8-07_finalTemplate.brd 8-07_finalMassProduction.txt 8.07.html "./Greg_table_folder/8.07 - Sheet1.csv"
+        try:
+            ref_table
+        except:
+            ref_table = None
+        
+        try:
+            TARGET_LANG
+        except:
+            TARGET_LANG = 'es'
+                    
+        print("translate brd task")
+        trans_res = translate_brd(path, TARGET_LANG=TARGET_LANG, path_ref=ref_table)
+        trans_res.translate_file()
+        print("translate html task ------")
+        translate_clean_html = translate_html(path, infile_html, TARGET_LANG=TARGET_LANG)
+        translate_clean_html.translate_file()
+        print("translate xml task ------")
+        translate_clean_xml = translate_xml(path, path_ref=ref_table, TARGET_LANG=TARGET_LANG)
+        translate_clean_xml.translate_file()
