@@ -1,8 +1,12 @@
 # Translate_CTAT
 
-## Purpose
+## What is CTAT?
 
-The purpose of this script is to automatically translate an entire package from English to another language, such as Spanish. The process involves several steps, which include:
+The [Cognitive Tutor Authoring Tools (CTAT)](https://github.com/CMUCTAT/CTAT), is a tool suite that enables you to add learning by doing (i.e., active learning) to online courses. It is developed by Carnegie Mellon University.
+
+## Purpose of this script
+
+The purpose of this script is to automatically translate an entire CTAT package from English to another language, such as Spanish. The process involves several steps, which include:
 
 - clean: extract all the sentences(not variables, e.g. hints) from the massproduction graph(.brd) to ensure the translation only occurs on the massproduction table(.txt).
 
