@@ -54,3 +54,12 @@ Here's an example command line call for the script using the provided arguments:
 - xml.etree.ElementTree: For parsing and manipulating XML data.
 - lxml.html: For parsing and manipulating HTML data.
 - xmldiff.main: For comparing and diffing XML documents.
+
+## Known bugs
+
+The script is not completely bug-free and there are several known issues that need to be addressed:
+
+- Ampersand character: In XML, the ampersand character (&) should be treated as &amp; to comply with the XML syntax rules. This issue has not been addressed in the current version of the script.
+- Quotation marks and periods: After translation, the order of quotation marks and periods may change.
+- Translation of function parameters: Some function parameters that indicate the state of the function, such as "hidden", "true", and "false", may also be translated.
+- Translation of brds instead of the massproduction table: If brds are translated instead of the massproduction table, certain fields such as <matcherParameter> may not be translated.
