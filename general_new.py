@@ -282,7 +282,7 @@ class mass_produce:
                         content_new = content_new.replace(variable, value)
                         table_clean.iloc[row, column] = content_new
                     except:
-                        print(column_name, variable + " doesn't exist")
+                        print(column_name, variable + " doesn't exist in mass production table (but in brd)")
         return table_clean
 
     def function_format(self, content_new):
@@ -358,7 +358,7 @@ class mass_produce:
                                 line_str = self.function_format(line_str)
                                 # line_str = line_str.replace(variable, value).replace("<%", "&lt;%").replace("%>", "%&gt;")
                             except:
-                                print(column_name, variable + " doesn't exist")
+                                print(column_name, variable + " doesn't exist in mass production table (but in brd)")
                     count_line += 1
                     outfile.write(line_str)
                 print(fout.split("/")[-1] + " finished")
@@ -450,7 +450,7 @@ class translate():
                         content_new = content_new.replace(variable, value)
                         table_clean.iloc[row, column] = content_new
                     except:
-                        print(column_name, variable + " doesn't exist")
+                        print(column_name, variable + " doesn't exist in mass production table (but in brd)")
                         flag = False
             else:
                 flag = False
